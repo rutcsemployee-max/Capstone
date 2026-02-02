@@ -50,11 +50,10 @@ public class KlekiDraw extends Browser {
     // Padding around drawing inside the canvas (pixels)
     private static final double PADDING = 60.0;
 
-    public static void draw() throws Exception {
+    public static boolean draw() {
         //WebDriver driver = new FirefoxDriver();
         //driver.manage().timeouts().implicitlyWait(Duration.ofSeconds(5));
-        Browser.launch();
-        Browser.navigate("https://kleki.com/");
+
         try {
             // wait for Kleki to initialize; increase if your connection is slow
 
@@ -64,15 +63,8 @@ public class KlekiDraw extends Browser {
 
             JavascriptExecutor js = (JavascriptExecutor) driver;
 
-            // ensure KL.draw exists (boolean)
-//            Boolean ready = (Boolean) js.executeScript(
-//                    "return !!(window.KL && typeof KL.draw === 'function');");
-//            if (Boolean.FALSE.equals(ready)) {
-//                throw new RuntimeException("KL.draw API not available on the page");
-//            }
-
             // load stroke-separated file produced by the Python pre-bake
-            List<Stroke> strokes = loadStrokes(DATA_FILE);
+            List<Stroke> strokes = loadStrokes();
             if (strokes.isEmpty()) {
                 throw new RuntimeException("No strokes loaded from " + DATA_FILE);
             }
@@ -95,7 +87,9 @@ public class KlekiDraw extends Browser {
             // get canvas pixel size (Number -> double)
             Object cwObj = js.executeScript("return document.querySelector('canvas').width;");
             Object chObj = js.executeScript("return document.querySelector('canvas').height;");
+            assert cwObj != null;
             double cw = ((Number) cwObj).doubleValue();
+            assert chObj != null;
             double ch = ((Number) chObj).doubleValue();
 
             // compute usable area (respecting padding) and scale to preserve aspect ratio
@@ -110,14 +104,13 @@ public class KlekiDraw extends Browser {
             double offsetX = (cw - drawW) / 2.0;
             double offsetY = (ch - drawH) / 2.0;
 
-            System.out.println(String.format("Canvas: %.0fx%.0f | svg: %.2fx%.2f | scale: %.4f | strokes: %d",
-                    cw, ch, svgW, svgH, scale, strokes.size()));
+            System.out.printf("Canvas: %.0fx%.0f | svg: %.2fx%.2f | scale: %.4f | strokes: %d%n",
+                    cw, ch, svgW, svgH, scale, strokes.size());
 
             reduceBrushSize(driver);
 
             // draw each stroke separately (one KL.draw per stroke)
-            for (int si = 0; si < strokes.size(); si++) {
-                Stroke stroke = strokes.get(si);
+            for (Stroke stroke : strokes) {
                 if (stroke.pts.size() < 2) continue;
 
                 StringBuilder jsArray = new StringBuilder("[");
@@ -139,7 +132,7 @@ public class KlekiDraw extends Browser {
                 jsArray.append("]");
 
                 // call Kleki draw API for this single stroke
-                js.executeScript("KL.draw(" + jsArray.toString() + ");");
+                js.executeScript("KL.draw(" + jsArray + ");");
 
                 // brief pause to let Kleki process the stroke chain (still very fast)
                 Thread.sleep(25);
@@ -148,27 +141,27 @@ public class KlekiDraw extends Browser {
             // allow final rendering to settle
             Thread.sleep(300);
 
-            // screenshot the canvas only
-            //WebElement canvas = driver.findElement(By.tagName("canvas"));
-            captureScreenshot();
+        } catch (Exception e) {
+            e.printStackTrace();
+            return false;
 
-        } finally {
-            // driver.quit(); // uncomment to close browser automatically
-            Browser.close();
         }
+        return true;
     }
 
-    private static void captureScreenshot() {
+    public static boolean captureScreenshot() {
         File src = KlekiPage.canvas.getScreenshotAs(OutputType.FILE);
         File dest = new File(OUTPUT_IMAGE);
         dest.getParentFile().mkdirs();
         try {
             Files.copy(src.toPath(), dest.toPath());
         } catch (IOException e) {
-            throw new RuntimeException(e);
+            e.printStackTrace();
+            return false;
         }
 
         System.out.println("Done. Saved: " + dest.getAbsolutePath());
+        return true;
     }
 
     //reduce brush thickness
@@ -185,11 +178,11 @@ public class KlekiDraw extends Browser {
      * Load stroke-separated file. Lines starting with '#' start a new stroke.
      * Each non-comment line should be: x,y  (floats or ints)
      */
-    private static List<Stroke> loadStrokes(String file) throws IOException {
+    private static List<Stroke> loadStrokes() throws IOException {
         List<Stroke> strokes = new ArrayList<>();
         Stroke current = new Stroke();
 
-        try (BufferedReader br = new BufferedReader(new FileReader(file))) {
+        try (BufferedReader br = new BufferedReader(new FileReader(KlekiDraw.DATA_FILE))) {
             String line;
             while ((line = br.readLine()) != null) {
                 line = line.trim();
